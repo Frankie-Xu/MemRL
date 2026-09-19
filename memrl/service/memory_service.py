@@ -863,6 +863,9 @@ class MemoryService:
             elif metadata is not None and hasattr(metadata, "q_value"):
                 metadata.q_value = new_q
         except Exception:
+            # Do not leave an immutable or otherwise stale fallback object that
+            # can reintroduce the old Q after the fast cache evicts this ID.
+            getattr(self, "_mem_cache", {}).pop(memory_id, None)
             logger.debug("Failed to sync cached Q for %s", memory_id, exc_info=True)
 
     def _add_to_mem_cache(self, mem_id: str, mem_obj: Any) -> None:

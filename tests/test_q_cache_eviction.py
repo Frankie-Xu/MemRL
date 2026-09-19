@@ -4,6 +4,7 @@ import importlib
 import json
 import tempfile
 import sys
+import threading
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -55,18 +56,38 @@ class Store:
         )
 
 
+class ReadOnlyMetadata:
+    def __init__(self, q_value):
+        self._q_value = q_value
+
+    @property
+    def q_value(self):
+        return self._q_value
+
+    @q_value.setter
+    def q_value(self, value):
+        raise TypeError("metadata is immutable")
+
+
 class QCacheEvictionTests(unittest.TestCase):
     def setUp(self):
         self.store = Store()
         service = service_module.MemoryService.__new__(service_module.MemoryService)
         service.enable_value_driven = True
         service.rl_config = service_module.RLConfig(alpha=0.5, gamma=0.5, epsilon=0, topk=2)
+        mos = SimpleNamespace(mem_cubes={"cube": SimpleNamespace(text_mem=self.store)})
+        mos.get = lambda **kwargs: self.store.get(kwargs["memory_id"])
+        service.mos = mos
+        service.default_cube_id = "cube"
+        service.user_id = "user"
+        service._db_gate = threading.BoundedSemaphore(1)
         service._q_updater = service_module.QValueUpdater(
-            SimpleNamespace(mem_cubes={"cube": SimpleNamespace(text_mem=self.store)}),
+            mos,
             "user", service.rl_config, default_cube_id="cube"
         )
         service._q_cache = {}
         service._q_cache_max_size = 1
+        service._mem_cache_max_size = 10
         service.dict_memory = {"query": ["m", "other"]}
         service.query_embeddings = {"query": [1.0, 0.0]}
         service.embedding_provider = SimpleNamespace(embed=lambda texts: [[1., 0.] for _ in texts])
@@ -122,6 +143,15 @@ class QCacheEvictionTests(unittest.TestCase):
             self.assertEqual(restored._q_cache, self.service._q_cache)
             with open(Path(directory) / "local_cache" / "q_cache.json", encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle), {"m": -0.5, "other": 0.0})
+
+    def test_rejected_metadata_assignment_invalidates_fallback(self):
+        self.service.retrieve_query("query", k=2)
+        self.service._mem_cache["m"].metadata = ReadOnlyMetadata(0.0)
+        self.assertEqual(self.service.update_value("m", -1), -0.5)
+        self.service.update_value("other", 0)
+        self.assertNotIn("m", self.service._mem_cache)
+        self.assertEqual(self.retrieve_q("m"), -0.5)
+        self.assertIn("m", self.service._mem_cache)
 
 
 if __name__ == "__main__":
