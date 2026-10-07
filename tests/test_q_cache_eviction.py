@@ -153,6 +153,19 @@ class QCacheEvictionTests(unittest.TestCase):
         self.assertEqual(self.retrieve_q("m"), -0.5)
         self.assertIn("m", self.service._mem_cache)
 
+    def test_first_q_update_replaces_missing_metadata_value(self):
+        # Imported or legacy memories need not already have a q_value field.
+        for metadata in (SimpleNamespace(full_content="synthetic"), None):
+            with self.subTest(metadata=metadata):
+                self.store.items["m"].metadata = {"full_content": "synthetic"}
+                self.service._q_cache.clear()
+                self.service._mem_cache["m"] = SimpleNamespace(
+                    memory="m", metadata=metadata
+                )
+                self.assertEqual(self.service.update_value("m", -1), -0.5)
+                self.service._q_cache.clear()  # force the metadata/storage fallback
+                self.assertEqual(self.retrieve_q("m"), -0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

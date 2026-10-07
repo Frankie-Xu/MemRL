@@ -860,8 +860,12 @@ class MemoryService:
         try:
             if isinstance(metadata, dict):
                 metadata["q_value"] = new_q
-            elif metadata is not None and hasattr(metadata, "q_value"):
+            elif metadata is not None:
                 metadata.q_value = new_q
+            else:
+                # Legacy memories may have no metadata at all. Rehydrate the
+                # persisted metadata instead of keeping a default-Q fallback.
+                getattr(self, "_mem_cache", {}).pop(memory_id, None)
         except Exception:
             # Do not leave an immutable or otherwise stale fallback object that
             # can reintroduce the old Q after the fast cache evicts this ID.
